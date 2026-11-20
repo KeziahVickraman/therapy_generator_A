@@ -160,6 +160,9 @@ Generate a realistic, concise, warm therapy homework worksheet with 3 structured
 
       const rawText = (response.text ?? '{}').trim();
       const parsed = JSON.parse(rawText);
+      if (Array.isArray(parsed.tasks)) {
+        parsed.tasks = parsed.tasks.slice(0, 3);
+      }
       return res.json(parsed);
     } catch (err: unknown) {
       console.error('Gemini homework generation error:', err);

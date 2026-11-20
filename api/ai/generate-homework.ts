@@ -106,7 +106,11 @@ Generate a realistic, concise, warm therapy homework worksheet with 3 structured
     });
 
     const rawText = (response.text ?? '{}').trim();
-    return res.status(200).json(JSON.parse(rawText));
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed.tasks)) {
+      parsed.tasks = parsed.tasks.slice(0, 3);
+    }
+    return res.status(200).json(parsed);
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Unable to generate homework draft.';
