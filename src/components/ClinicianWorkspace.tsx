@@ -14,17 +14,19 @@ import {
   Send,
   Sparkles,
   Trash2,
+  UserCheck,
 } from 'lucide-react';
 import { ProgressTrendChart } from './ProgressTrendChart';
 import type {
   AssignmentStatus,
   ClientProfile,
+  ClinicianProfile,
   HomeworkAssignment,
   ResourceItem,
   TherapyModality,
 } from '../types/care';
 
-export type ClinicianSubTab = 'generator' | 'walkthrough' | 'progress';
+export type ClinicianSubTab = 'generator' | 'walkthrough' | 'sent' | 'progress';
 
 export interface DraftTaskInput {
   title: string;
@@ -43,6 +45,9 @@ export interface WorksheetDraft {
 }
 
 interface ClinicianWorkspaceProps {
+  clinicians: ClinicianProfile[];
+  selectedClinicianId: string;
+  onSelectClinician: (clinicianId: string) => void;
   clients: ClientProfile[];
   assignments: HomeworkAssignment[];
   selectedClientId: string;
@@ -112,6 +117,9 @@ function getStatusDisplay(status: AssignmentStatus) {
 }
 
 export function ClinicianWorkspace({
+  clinicians,
+  selectedClinicianId,
+  onSelectClinician,
   clients,
   assignments,
   selectedClientId,
@@ -127,12 +135,39 @@ export function ClinicianWorkspace({
   onCopyLink,
 }: ClinicianWorkspaceProps) {
   const [clientSearch, setClientSearch] = useState('');
+
+  const selectedClinician =
+    clinicians.find((c) => c.id === selectedClinicianId) || clinicians[0];
+
+  const clinicianClients = useMemo(
+    () =>
+      clients.filter((c) =>
+        selectedClinician ? c.clinicianId === selectedClinician.id : true
+      ),
+    [clients, selectedClinician?.id]
+  );
+
   const selectedClient =
-    clients.find((c) => c.id === selectedClientId) || clients[0];
+    clinicianClients.find((c) => c.id === selectedClientId) ||
+    clinicianClients[0] ||
+    clients[0];
 
   const clientAssignments = useMemo(
     () => assignments.filter((a) => a.clientId === selectedClient?.id),
     [assignments, selectedClient?.id]
+  );
+
+  const clinicianAssignments = useMemo(() => {
+    const clientIds = new Set(clinicianClients.map((c) => c.id));
+    return assignments.filter((a) => clientIds.has(a.clientId));
+  }, [assignments, clinicianClients]);
+
+  const clinicianSentAssignments = useMemo(
+    () =>
+      clinicianAssignments.filter(
+        (a) => a.status === 'pushed' || a.status === 'completed'
+      ),
+    [clinicianAssignments]
   );
 
   // Generator state
@@ -180,6 +215,8 @@ export function ClinicianWorkspace({
     null
   );
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [importedClientLabel, setImportedClientLabel] = useState<string>('');
+  const [lastSentAssignmentId, setLastSentAssignmentId] = useState<string>('');
   const [feedbackDraft, setFeedbackDraft] = useState('');
   const [savingFeedback, setSavingFeedback] = useState(false);
   const [feedbackSavedId, setFeedbackSavedId] = useState<string | null>(null);
@@ -233,14 +270,38 @@ export function ClinicianWorkspace({
 
   const filteredClients = useMemo(() => {
     const q = clientSearch.trim().toLowerCase();
-    if (!q) return clients;
-    return clients.filter(
+    if (!q) return clinicianClients;
+    return clinicianClients.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.primaryFocus.toLowerCase().includes(q) ||
         c.modality.toLowerCase().includes(q)
     );
-  }, [clients, clientSearch]);
+  }, [clinicianClients, clientSearch]);
+
+  const handleImportClientDetails = (clientId: string) => {
+    const target = clients.find((c) => c.id === clientId);
+    if (!target) return;
+    if (target.clinicianId !== selectedClinician?.id) {
+      onSelectClinician(target.clinicianId);
+    }
+    onSelectClient(target.id);
+    setSessionNotes(
+      `Session ${target.sessionNumber} with ${target.name}. Presenting focus: ${target.primaryFocus}.`
+    );
+    setFocusGoal(
+      `Support ${target.preferredName} between sessions using ${target.modality} practices tailored to ${target.primaryFocus.toLowerCase()}.`
+    );
+    setDraft((prev) => ({
+      ...prev,
+      modality: target.modality,
+      clinicalRationale: `Tailored ${target.modality} between-session plan for ${target.name} (${target.primaryFocus}).`,
+      walkthroughNotes: `${target.preferredName}, let us keep these exercises gentle and practical ahead of our ${target.nextSessionDate} session.`,
+    }));
+    setImportedClientLabel(
+      `Imported: ${target.name} · ${target.modality} · Session ${target.sessionNumber} (${target.primaryFocus})`
+    );
+  };
 
   const handleGenerateWithAI = async () => {
     if (!selectedClient) return;
@@ -297,11 +358,14 @@ export function ClinicianWorkspace({
         tasks: draft.tasks.filter((t) => t.title.trim().length > 0),
       });
       setSelectedAssignmentId(created.id);
-      onChangeSubTab('walkthrough');
       if (targetStatus === 'pushed') {
+        setLastSentAssignmentId(created.id);
         onCopyLink(created.uniqueToken);
         setCopiedToken(created.uniqueToken);
         setTimeout(() => setCopiedToken(null), 2200);
+        onChangeSubTab('sent');
+      } else {
+        onChangeSubTab('walkthrough');
       }
     } finally {
       setIsSaving(false);
@@ -312,9 +376,11 @@ export function ClinicianWorkspace({
     const updated = await onUpdateAssignment(assignment.id, {
       status: 'pushed',
     });
+    setLastSentAssignmentId(updated.id);
     onCopyLink(updated.uniqueToken);
     setCopiedToken(updated.uniqueToken);
     setTimeout(() => setCopiedToken(null), 2200);
+    onChangeSubTab('sent');
   };
 
   const handleInlineTaskSave = async (
@@ -363,10 +429,77 @@ export function ClinicianWorkspace({
     }
   };
 
-  if (!selectedClient) return null;
+  if (!selectedClient || !selectedClinician) return null;
+
+  const sentDisplayAssignment =
+    clinicianSentAssignments.find((a) => a.id === lastSentAssignmentId) ||
+    clinicianSentAssignments.find((a) => a.id === selectedAssignmentId) ||
+    clinicianSentAssignments[0];
+
+  const sentDisplayClient = sentDisplayAssignment
+    ? clients.find((c) => c.id === sentDisplayAssignment.clientId)
+    : selectedClient;
 
   return (
-    <div className="max-w-[1360px] mx-auto px-6 py-8">
+    <div className="max-w-[1360px] mx-auto px-6 py-8 space-y-6">
+      {/* Clinician POV Selector & Personal Dashboard Summary */}
+      <section className="bg-white border border-[#E6E2DA] rounded-2xl p-5 sm:p-6 flex flex-wrap items-center justify-between gap-6">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-[#151B2E] text-white flex items-center justify-center shrink-0">
+            <UserCheck className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div>
+            <label
+              htmlFor="clinician-select"
+              className="block text-xs font-medium text-[#57534E]"
+            >
+              Clinician Dashboard · Choose Your Name
+            </label>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <select
+                id="clinician-select"
+                value={selectedClinician.id}
+                onChange={(e) => onSelectClinician(e.target.value)}
+                className="px-3 py-1.5 text-sm font-display font-semibold bg-[#FAF9F6] border border-[#E6E2DA] rounded-lg text-[#151B2E] focus:outline-none focus:ring-2 focus:ring-[#2045C8]"
+              >
+                {clinicians.map((clin) => (
+                  <option key={clin.id} value={clin.id}>
+                    {clin.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-[#57534E]">
+                {selectedClinician.credentials} ·{' '}
+                {selectedClinician.specialtyFocus || selectedClinician.city}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 text-right shrink-0">
+          <div>
+            <p className="text-[11px] text-[#57534E]">My Clients</p>
+            <p className="font-mono text-lg font-semibold text-[#151B2E] tabular-nums">
+              {clinicianClients.length}
+            </p>
+          </div>
+          <div className="h-7 w-px bg-[#E6E2DA]" aria-hidden="true" />
+          <div>
+            <p className="text-[11px] text-[#57534E]">Sent to Clients</p>
+            <p className="font-mono text-lg font-semibold text-[#2045C8] tabular-nums">
+              {clinicianSentAssignments.length}
+            </p>
+          </div>
+          <div className="h-7 w-px bg-[#E6E2DA]" aria-hidden="true" />
+          <div>
+            <p className="text-[11px] text-[#57534E]">Submitted</p>
+            <p className="font-mono text-lg font-semibold text-[#15803D] tabular-nums">
+              {clinicianAssignments.filter((a) => a.status === 'completed').length}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Sidebar: Patient Roster (260px-equivalent 3 cols) */}
         <aside className="lg:col-span-3 bg-white border border-[#E6E2DA] rounded-2xl overflow-hidden">
@@ -463,6 +596,7 @@ export function ClinicianWorkspace({
               {[
                 { id: 'generator' as const, label: 'Homework Generator' },
                 { id: 'walkthrough' as const, label: 'Walkthrough & Push' },
+                { id: 'sent' as const, label: 'Sent to Client' },
                 { id: 'progress' as const, label: 'Progress & Submissions' },
               ].map((tab) => {
                 const active = activeSubTab === tab.id;
@@ -545,6 +679,43 @@ export function ClinicianWorkspace({
                         <option value={20}>20 min</option>
                       </select>
                     </label>
+                  </div>
+                </div>
+
+                <div className="mt-5 p-4 rounded-xl bg-[#FAF9F6] border border-[#E6E2DA] flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex-1 min-w-[240px]">
+                    <label
+                      htmlFor="import-client-details"
+                      className="block text-xs font-medium text-[#151B2E] mb-1.5"
+                    >
+                      Import Client Details
+                    </label>
+                    <select
+                      id="import-client-details"
+                      value={selectedClient.id}
+                      onChange={(e) => handleImportClientDetails(e.target.value)}
+                      className="w-full px-3 py-2 text-sm font-medium bg-white border border-[#E6E2DA] rounded-lg text-[#151B2E] focus:outline-none focus:ring-2 focus:ring-[#2045C8]"
+                    >
+                      {clinicianClients.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.name} — {client.modality} · Session{' '}
+                          {client.sessionNumber} ({client.primaryFocus})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-xs text-[#57534E] max-w-md">
+                    {importedClientLabel ? (
+                      <span className="text-[#15803D] font-medium">
+                        {importedClientLabel}
+                      </span>
+                    ) : (
+                      <span>
+                        Active client: {selectedClient.name} ·{' '}
+                        {selectedClient.primaryFocus} · Next session{' '}
+                        {selectedClient.nextSessionDate}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -1192,7 +1363,260 @@ export function ClinicianWorkspace({
             </div>
           )}
 
-          {/* SUB-TAB 3: PATIENT PROGRESS & SUBMISSIONS */}
+          {/* SUB-TAB 3: SENT TO CLIENT PAGE */}
+          {activeSubTab === 'sent' && (
+            <div className="space-y-6">
+              {!sentDisplayAssignment ? (
+                <div className="bg-white border border-[#E6E2DA] rounded-2xl p-10 text-center">
+                  <h2 className="font-display text-xl font-bold text-[#151B2E]">
+                    Sent to Client
+                  </h2>
+                  <p className="mt-2 text-sm text-[#57534E]">
+                    No worksheets have been pushed by {selectedClinician.name}{' '}
+                    yet. Create a worksheet and click Save &amp; One-Click Push.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onChangeSubTab('generator')}
+                    className="mt-5 px-4 py-2 text-sm font-medium text-white bg-[#2045C8] rounded-lg"
+                  >
+                    Go to Homework Generator
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Main Sent to Client Confirmation Card */}
+                  <section className="bg-white border border-[#E6E2DA] rounded-2xl overflow-hidden">
+                    <div className="p-6 sm:p-8 bg-[#FAF9F6] border-b border-[#E6E2DA]">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <div className="inline-flex items-center gap-2 text-xs font-medium text-[#15803D]">
+                            <CheckCircle2
+                              className="w-4 h-4"
+                              aria-hidden="true"
+                            />
+                            <span>
+                              Sent by {selectedClinician.name} to{' '}
+                              {sentDisplayClient?.name}
+                            </span>
+                          </div>
+                          <h2 className="mt-2 font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#151B2E]">
+                            Sent to Client
+                          </h2>
+                          <p className="mt-1.5 text-sm text-[#57534E]">
+                            Worksheet{' '}
+                            <span className="font-medium text-[#151B2E]">
+                              &ldquo;{sentDisplayAssignment.title}&rdquo;
+                            </span>{' '}
+                            is live and ready for{' '}
+                            {sentDisplayClient?.preferredName} to complete
+                            between sessions.
+                          </p>
+                        </div>
+
+                        {sentDisplayAssignment.pushedAt && (
+                          <span className="text-xs font-mono text-[#57534E] tabular-nums">
+                            Pushed{' '}
+                            {new Date(
+                              sentDisplayAssignment.pushedAt
+                            ).toLocaleString('en-SG', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-6 sm:p-8 space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E6E2DA]">
+                          <p className="text-xs text-[#57534E]">Recipient</p>
+                          <p className="mt-1 font-display text-sm font-semibold text-[#151B2E]">
+                            {sentDisplayClient?.name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-[#57534E]">
+                            {sentDisplayAssignment.modality} ·{' '}
+                            {sentDisplayAssignment.tasks.length} exercises
+                          </p>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E6E2DA]">
+                          <p className="text-xs text-[#57534E]">
+                            Private Weblink
+                          </p>
+                          <p className="mt-1 font-mono text-sm font-medium text-[#2045C8] truncate">
+                            ?clientLink={sentDisplayAssignment.uniqueToken}
+                          </p>
+                          <p className="mt-0.5 text-xs text-[#57534E]">
+                            Zero app download required
+                          </p>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E6E2DA]">
+                          <p className="text-xs text-[#57534E]">
+                            Client Passcode PIN
+                          </p>
+                          <p className="mt-1 font-mono text-sm font-semibold text-[#151B2E] tabular-nums">
+                            {sentDisplayClient?.accessPin}
+                          </p>
+                          <p className="mt-0.5 text-xs text-[#57534E]">
+                            Next session: {sentDisplayClient?.nextSessionDate}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => onChangeSubTab('generator')}
+                          className="px-4 py-2 text-sm font-medium text-[#151B2E] bg-[#FAF9F6] hover:bg-[#F3F1EC] border border-[#E6E2DA] rounded-lg transition-colors whitespace-nowrap"
+                        >
+                          Back to Homework Generator
+                        </button>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onCopyLink(sentDisplayAssignment.uniqueToken);
+                              setCopiedToken(sentDisplayAssignment.uniqueToken);
+                              setTimeout(() => setCopiedToken(null), 2000);
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-[#151B2E] bg-white hover:bg-[#FAF9F6] border border-[#E6E2DA] rounded-lg transition-colors whitespace-nowrap"
+                          >
+                            {copiedToken ===
+                            sentDisplayAssignment.uniqueToken ? (
+                              <>
+                                <Check
+                                  className="w-4 h-4 text-[#15803D]"
+                                  aria-hidden="true"
+                                />
+                                <span>Link Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-4 h-4" aria-hidden="true" />
+                                <span>Copy Client Link</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onOpenClientLink(
+                                sentDisplayAssignment.uniqueToken
+                              )
+                            }
+                            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[#2045C8] hover:bg-[#1938A8] rounded-lg transition-colors whitespace-nowrap"
+                          >
+                            <span>Open Client Link</span>
+                            <ExternalLink
+                              className="w-4 h-4"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Sent History Across This Clinician's Caseload */}
+                  <section className="bg-white border border-[#E6E2DA] rounded-2xl overflow-hidden">
+                    <div className="p-5 border-b border-[#E6E2DA] flex items-center justify-between">
+                      <h3 className="font-display text-base font-semibold text-[#151B2E]">
+                        All Worksheets Sent by {selectedClinician.name}
+                      </h3>
+                      <span className="font-mono text-xs text-[#57534E] tabular-nums">
+                        {clinicianSentAssignments.length} sent
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-[#E6E2DA] bg-[#FAF9F6] text-xs font-medium text-[#57534E]">
+                            <th className="py-3 px-5">Client</th>
+                            <th className="py-3 px-4">Worksheet</th>
+                            <th className="py-3 px-4">Status</th>
+                            <th className="py-3 px-4 text-right">Tasks</th>
+                            <th className="py-3 px-5 text-right">Weblink</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E6E2DA] text-sm">
+                          {clinicianSentAssignments.map((asg) => {
+                            const recipient = clients.find(
+                              (c) => c.id === asg.clientId
+                            );
+                            const completed = asg.tasks.filter(
+                              (t) => t.completed
+                            ).length;
+                            const statusMeta = getStatusDisplay(asg.status);
+                            const StatusIcon = statusMeta.Icon;
+
+                            return (
+                              <tr
+                                key={asg.id}
+                                onClick={() => setLastSentAssignmentId(asg.id)}
+                                className={`cursor-pointer transition-colors ${
+                                  sentDisplayAssignment.id === asg.id
+                                    ? 'bg-[#F3F1EC]/70'
+                                    : 'hover:bg-[#FAF9F6]'
+                                }`}
+                              >
+                                <td className="py-3.5 px-5 font-medium text-[#151B2E]">
+                                  {recipient?.name}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <p className="text-[#151B2E] font-medium">
+                                    {asg.title}
+                                  </p>
+                                  <p className="text-xs text-[#57534E] font-mono">
+                                    {asg.modality} · {asg.uniqueToken}
+                                  </p>
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <span
+                                    className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusMeta.colorClass}`}
+                                  >
+                                    <StatusIcon
+                                      className="w-3.5 h-3.5"
+                                      aria-hidden="true"
+                                    />
+                                    <span>{statusMeta.label}</span>
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4 text-right font-mono text-xs tabular-nums">
+                                  {completed}/{asg.tasks.length}
+                                </td>
+                                <td className="py-3.5 px-5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenClientLink(asg.uniqueToken);
+                                    }}
+                                    className="text-xs font-medium text-[#2045C8] hover:underline whitespace-nowrap"
+                                  >
+                                    Open Link
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* SUB-TAB 4: PATIENT PROGRESS & SUBMISSIONS */}
           {activeSubTab === 'progress' && (
             <div className="space-y-6">
               {/* Longitudinal Trend Card */}

@@ -19,6 +19,7 @@ export interface ClinicianProfile {
   practiceName: string;
   city: string;
   avatarUrl: string;
+  specialtyFocus?: string;
 }
 
 export interface ProgressPoint {
@@ -30,6 +31,7 @@ export interface ProgressPoint {
 
 export interface ClientProfile {
   id: string;
+  clinicianId: string;
   name: string;
   preferredName: string;
   primaryFocus: string;
@@ -98,6 +100,7 @@ export interface ResourceItem {
 
 export interface WorkspacePayload {
   clinician: ClinicianProfile;
+  clinicians: ClinicianProfile[];
   clients: ClientProfile[];
   assignments: HomeworkAssignment[];
   resources: ResourceItem[];

@@ -21,7 +21,7 @@ import type {
   WorkspacePayload,
 } from './types/care';
 
-const STORAGE_KEY = 'heidi_care_workspace_v1';
+const STORAGE_KEY = 'heidi_care_workspace_v2';
 
 function loadInitialWorkspace(): WorkspacePayload {
   try {
@@ -31,6 +31,8 @@ function loadInitialWorkspace(): WorkspacePayload {
       if (
         parsed &&
         parsed.clinician &&
+        Array.isArray(parsed.clinicians) &&
+        parsed.clinicians.length > 0 &&
         Array.isArray(parsed.clients) &&
         parsed.clients.length > 0 &&
         Array.isArray(parsed.assignments) &&
@@ -67,11 +69,20 @@ export default function App() {
     ? workspace.assignments.find((a) => a.uniqueToken === initialUrlToken)
     : undefined;
 
+  const initialMatchedClient = initialMatchedAsg
+    ? workspace.clients.find((c) => c.id === initialMatchedAsg.clientId)
+    : undefined;
+
   const [activeTab, setActiveTab] = useState<ActiveTab>(
     initialMatchedAsg ? 'client' : 'overview'
   );
   const [role, setRole] = useState<UserRole>(
     initialMatchedAsg ? 'client' : 'clinician'
+  );
+  const [selectedClinicianId, setSelectedClinicianId] = useState<string>(
+    initialMatchedClient?.clinicianId ||
+      workspace.clinicians[0]?.id ||
+      workspace.clinician.id
   );
   const [selectedClientId, setSelectedClientId] = useState<string>(
     initialMatchedAsg?.clientId || workspace.clients[0]?.id || ''
@@ -441,9 +452,27 @@ export default function App() {
     showToast(`Loaded "${resource.title}" into Generator`);
   };
 
+  const handleSelectClinician = (clinicianId: string) => {
+    setSelectedClinicianId(clinicianId);
+    const firstClient =
+      workspace.clients.find((c) => c.clinicianId === clinicianId) ||
+      workspace.clients[0];
+    if (firstClient) {
+      setSelectedClientId(firstClient.id);
+      const matchedAsg =
+        workspace.assignments.find(
+          (a) => a.clientId === firstClient.id && a.status === 'pushed'
+        ) || workspace.assignments.find((a) => a.clientId === firstClient.id);
+      if (matchedAsg) {
+        setActiveClientToken(matchedAsg.uniqueToken);
+      }
+    }
+  };
+
   const handleResetDemoData = () => {
     const fresh = createInitialWorkspace();
     setWorkspace(fresh);
+    setSelectedClinicianId(fresh.clinicians[0]?.id || fresh.clinician.id);
     setSelectedClientId(fresh.clients[0]?.id || '');
     setActiveClientToken(fresh.assignments[0]?.uniqueToken || '');
     try {
@@ -454,12 +483,22 @@ export default function App() {
     showToast('Demo clinical data restored');
   };
 
+  const selectedClinician =
+    workspace.clinicians.find((c) => c.id === selectedClinicianId) ||
+    workspace.clinician;
   const selectedClient =
     workspace.clients.find((c) => c.id === selectedClientId) ||
     workspace.clients[0];
   const activeAssignment =
     workspace.assignments.find((a) => a.uniqueToken === activeClientToken) ||
     workspace.assignments.find((a) => a.clientId === selectedClient?.id);
+  const activeAssignmentClient = activeAssignment
+    ? workspace.clients.find((c) => c.id === activeAssignment.clientId)
+    : selectedClient;
+  const activeAssignmentClinician =
+    workspace.clinicians.find(
+      (c) => c.id === activeAssignmentClient?.clinicianId
+    ) || selectedClinician;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF9F6] text-[#151B2E]">
@@ -500,6 +539,9 @@ export default function App() {
 
         {activeTab === 'clinician' && (
           <ClinicianWorkspace
+            clinicians={workspace.clinicians}
+            selectedClinicianId={selectedClinician.id}
+            onSelectClinician={handleSelectClinician}
             clients={workspace.clients}
             assignments={workspace.assignments}
             selectedClientId={selectedClient?.id || ''}
@@ -518,7 +560,7 @@ export default function App() {
 
         {activeTab === 'client' && (
           <ClientPortal
-            clinician={workspace.clinician}
+            clinician={activeAssignmentClinician}
             clients={workspace.clients}
             assignments={workspace.assignments}
             activeToken={activeClientToken}

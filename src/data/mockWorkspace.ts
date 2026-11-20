@@ -13,11 +13,35 @@ export const SEED_CLINICIAN: ClinicianProfile = {
   practiceName: 'Harbor Mind Practice',
   city: 'Orchard Road, Singapore',
   avatarUrl: '/src/assets/images/avatar_dr_lin_1795158012005.jpg',
+  specialtyFocus: 'CBT, Burnout & Somatic Regulation',
 };
+
+export const SEED_CLINICIANS: ClinicianProfile[] = [
+  SEED_CLINICIAN,
+  {
+    id: 'clin-marcus-tan',
+    name: 'Dr. Marcus Tan',
+    credentials: 'PhD (Clinical Psychology), MSCP',
+    practiceName: 'Harbor Mind Practice',
+    city: 'Novena Medical Hub, Singapore',
+    avatarUrl: '/src/assets/images/avatar_dr_lin_1795158012005.jpg',
+    specialtyFocus: 'ACT, Life Transitions & Values Work',
+  },
+  {
+    id: 'clin-ananya-rao',
+    name: 'Dr. Ananya Rao',
+    credentials: 'MClinPsych, Certified CBT-I & DBT Clinician',
+    practiceName: 'Harbor Mind Practice',
+    city: 'Tanjong Pagar, Singapore',
+    avatarUrl: '/src/assets/images/avatar_dr_lin_1795158012005.jpg',
+    specialtyFocus: 'CBT-I Insomnia & Distress Tolerance',
+  },
+];
 
 export const SEED_CLIENTS: ClientProfile[] = [
   {
     id: 'client-maya',
+    clinicianId: 'clin-evelyn-lin',
     name: 'Maya Tan',
     preferredName: 'Maya',
     primaryFocus: 'Work burnout & perfectionistic worry',
@@ -34,6 +58,7 @@ export const SEED_CLIENTS: ClientProfile[] = [
   },
   {
     id: 'client-daniel',
+    clinicianId: 'clin-evelyn-lin',
     name: 'Daniel Lim',
     preferredName: 'Daniel',
     primaryFocus: 'Panic episodes & interoceptive avoidance',
@@ -49,6 +74,7 @@ export const SEED_CLIENTS: ClientProfile[] = [
   },
   {
     id: 'client-priya',
+    clinicianId: 'clin-marcus-tan',
     name: 'Priya Nair',
     preferredName: 'Priya',
     primaryFocus: 'Life transition & values alignment',
@@ -64,7 +90,23 @@ export const SEED_CLIENTS: ClientProfile[] = [
     ],
   },
   {
+    id: 'client-ethan',
+    clinicianId: 'clin-marcus-tan',
+    name: 'Ethan Goh',
+    preferredName: 'Ethan',
+    primaryFocus: 'Caregiver guilt & boundary setting',
+    modality: 'ACT',
+    sessionNumber: 5,
+    nextSessionDate: '30 Nov 2026',
+    accessPin: '3182',
+    weeklyProgress: [
+      { weekLabel: 'Wk 1', completionRate: 50, moodScore: 2.8, submittedDate: '04 Nov' },
+      { weekLabel: 'Wk 2', completionRate: 100, moodScore: 3.5, submittedDate: '11 Nov' },
+    ],
+  },
+  {
     id: 'client-marcus',
+    clinicianId: 'clin-ananya-rao',
     name: 'Marcus Wong',
     preferredName: 'Marcus',
     primaryFocus: 'Sleep onset insomnia & late-night rumination',
@@ -75,6 +117,22 @@ export const SEED_CLIENTS: ClientProfile[] = [
     weeklyProgress: [
       { weekLabel: 'Wk 1', completionRate: 50, moodScore: 2.5, submittedDate: '04 Nov' },
       { weekLabel: 'Wk 2', completionRate: 75, moodScore: 3.2, submittedDate: '11 Nov' },
+    ],
+  },
+  {
+    id: 'client-chloe',
+    clinicianId: 'clin-ananya-rao',
+    name: 'Chloe Koh',
+    preferredName: 'Chloe',
+    primaryFocus: 'Emotional overwhelm & interpersonal triggers',
+    modality: 'DBT',
+    sessionNumber: 7,
+    nextSessionDate: '01 Dec 2026',
+    accessPin: '8529',
+    weeklyProgress: [
+      { weekLabel: 'Wk 1', completionRate: 67, moodScore: 2.7, submittedDate: '28 Oct' },
+      { weekLabel: 'Wk 2', completionRate: 67, moodScore: 3.3, submittedDate: '04 Nov' },
+      { weekLabel: 'Wk 3', completionRate: 100, moodScore: 3.8, submittedDate: '11 Nov' },
     ],
   },
 ];
@@ -472,6 +530,7 @@ export const SEED_RESOURCES: ResourceItem[] = [
 export function createInitialWorkspace(): WorkspacePayload {
   return structuredClone({
     clinician: SEED_CLINICIAN,
+    clinicians: SEED_CLINICIANS,
     clients: SEED_CLIENTS,
     assignments: SEED_ASSIGNMENTS,
     resources: SEED_RESOURCES,
