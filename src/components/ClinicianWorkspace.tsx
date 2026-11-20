@@ -594,10 +594,113 @@ export function ClinicianWorkspace({
                 )}
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-xs text-[#57534E]">
-                    Drafts populate the editable worksheet below for clinician
-                    review.
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[#57534E]">
+                    <span>Quick presets:</span>
+                    {(
+                      [
+                        {
+                          label: 'CBT Reframe',
+                          modality: 'CBT' as TherapyModality,
+                          title: 'Evening Thought Catch & Compassionate Reframe',
+                          rationale:
+                            'Reduce post-work catastrophic forecasting by testing objective evidence.',
+                          walkthrough:
+                            'Aim for two short entries before Friday — keep each note under four sentences.',
+                          tasks: [
+                            {
+                              title: 'Catch one automatic worry thought after 6:30 PM',
+                              instruction:
+                                'Write down the exact automatic thought verbatim and rate emotion intensity (0–100).',
+                              frequency: '3 evenings this week',
+                              promptQuestion:
+                                'What factual counter-evidence softens this prediction?',
+                            },
+                            {
+                              title: 'Five-minute workday closing ritual',
+                              instruction:
+                                'Jot tomorrow’s top two priorities on paper, close your laptop, and take a short phone-free walk.',
+                              frequency: 'Daily on workdays',
+                              promptQuestion:
+                                'Did the ritual make it easier to transition into evening?',
+                            },
+                          ],
+                        },
+                        {
+                          label: 'Somatic Grounding',
+                          modality: 'Somatic' as TherapyModality,
+                          title: 'Physiological Sigh & 5-4-3-2-1 Orienting',
+                          rationale:
+                            'Build interoceptive tolerance during mild autonomic arousal without avoidance.',
+                          walkthrough:
+                            'Let the exhale stay twice as long as the inhale and keep your feet anchored.',
+                          tasks: [
+                            {
+                              title: 'Two physiological sighs before stressful transitions',
+                              instruction:
+                                'Double inhale through the nose, followed by a slow unhurried exhale through the mouth.',
+                              frequency: 'Morning & pre-commute',
+                              promptQuestion:
+                                'How did chest or shoulder tension shift after the second exhale?',
+                            },
+                            {
+                              title: '5-4-3-2-1 neutral sensory scan',
+                              instruction:
+                                'Quietly notice 5 neutral visual shapes, 4 tactile textures, and 3 steady ambient sounds.',
+                              frequency: 'When activation rises',
+                              promptQuestion:
+                                'Which physical anchor brought attention outward fastest?',
+                            },
+                          ],
+                        },
+                        {
+                          label: 'ACT Values',
+                          modality: 'ACT' as TherapyModality,
+                          title: 'Values Compass & Defusion Micro-Steps',
+                          rationale:
+                            'Shift behavior from uncertainty-avoidance toward chosen values-driven action.',
+                          walkthrough:
+                            'Focus on taking one small step aligned with your value rather than waiting to feel 100% ready.',
+                          tasks: [
+                            {
+                              title: 'Label one "Radio Doubt" story each morning',
+                              instruction:
+                                'Prefix anxious self-talk with "I notice my mind is telling me the story that..." to create gentle space.',
+                              frequency: 'Daily for 5 days',
+                              promptQuestion:
+                                'Which repeated story showed up most often this week?',
+                            },
+                            {
+                              title: 'Complete one 15-minute values-aligned action',
+                              instruction:
+                                'Take one small step rooted in Curiosity or Care even if nervousness tags along.',
+                              frequency: '2x this week',
+                              promptQuestion:
+                                'What step did you take, and how did it feel afterward?',
+                            },
+                          ],
+                        },
+                      ] as const
+                    ).map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setGenerateError(null);
+                          setDraft((prev) => ({
+                            ...prev,
+                            title: preset.title,
+                            modality: preset.modality,
+                            clinicalRationale: preset.rationale,
+                            walkthroughNotes: preset.walkthrough,
+                            tasks: preset.tasks.map((t) => ({ ...t })),
+                          }));
+                        }}
+                        className="px-2.5 py-1 text-xs font-medium text-[#151B2E] bg-[#FAF9F6] hover:bg-[#F3F1EC] border border-[#E6E2DA] rounded-md transition-colors whitespace-nowrap"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     type="button"
                     onClick={handleGenerateWithAI}

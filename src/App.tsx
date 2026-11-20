@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 import { TopBar } from './components/TopBar';
 import { RoleToggleStrip } from './components/RoleToggleStrip';
 import { OverviewPage } from './components/OverviewPage';
@@ -10,26 +10,80 @@ import {
 } from './components/ClinicianWorkspace';
 import { ClientPortal } from './components/ClientPortal';
 import { ResourcesLibrary } from './components/ResourcesLibrary';
+import { createInitialWorkspace } from './data/mockWorkspace';
 import type {
   ActiveTab,
   HomeworkAssignment,
+  HomeworkTask,
   ResourceItem,
   TherapyModality,
   UserRole,
   WorkspacePayload,
 } from './types/care';
 
-export default function App() {
-  const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+const STORAGE_KEY = 'heidi_care_workspace_v1';
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
-  const [role, setRole] = useState<UserRole>('clinician');
-  const [selectedClientId, setSelectedClientId] = useState<string>('');
+function loadInitialWorkspace(): WorkspacePayload {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as WorkspacePayload;
+      if (
+        parsed &&
+        parsed.clinician &&
+        Array.isArray(parsed.clients) &&
+        parsed.clients.length > 0 &&
+        Array.isArray(parsed.assignments) &&
+        Array.isArray(parsed.resources)
+      ) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Fall back to fresh mock data
+  }
+  return createInitialWorkspace();
+}
+
+function generateClientToken(clientName: string): string {
+  const slug =
+    clientName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .split('-')[0] || 'client';
+  const rand = Math.random().toString(16).slice(2, 6);
+  return `hc-${slug}-${rand}`;
+}
+
+export default function App() {
+  const [workspace, setWorkspace] = useState<WorkspacePayload>(() =>
+    loadInitialWorkspace()
+  );
+
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialUrlToken = initialParams.get('clientLink');
+  const initialMatchedAsg = initialUrlToken
+    ? workspace.assignments.find((a) => a.uniqueToken === initialUrlToken)
+    : undefined;
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    initialMatchedAsg ? 'client' : 'overview'
+  );
+  const [role, setRole] = useState<UserRole>(
+    initialMatchedAsg ? 'client' : 'clinician'
+  );
+  const [selectedClientId, setSelectedClientId] = useState<string>(
+    initialMatchedAsg?.clientId || workspace.clients[0]?.id || ''
+  );
   const [clinicianSubTab, setClinicianSubTab] =
     useState<ClinicianSubTab>('generator');
-  const [activeClientToken, setActiveClientToken] = useState<string>('');
+  const [activeClientToken, setActiveClientToken] = useState<string>(
+    initialMatchedAsg?.uniqueToken ||
+      workspace.assignments.find((a) => a.status === 'pushed')?.uniqueToken ||
+      workspace.assignments[0]?.uniqueToken ||
+      ''
+  );
   const [incomingTemplate, setIncomingTemplate] = useState<ResourceItem | null>(
     null
   );
@@ -42,64 +96,14 @@ export default function App() {
     }, 2600);
   }, []);
 
+  // Persist changes locally so Clinician <-> Client views stay synced across reloads and on Vercel static deployments
   useEffect(() => {
-    let cancelled = false;
-    async function fetchWorkspace() {
-      try {
-        const res = await fetch('/api/workspace');
-        if (!res.ok) {
-          throw new Error('Unable to load clinical workspace.');
-        }
-        const data = (await res.json()) as WorkspacePayload;
-        if (cancelled) return;
-        setWorkspace(data);
-
-        // Check URL query parameter for direct client weblink access
-        const params = new URLSearchParams(window.location.search);
-        const urlToken = params.get('clientLink');
-        if (urlToken) {
-          const matchedAsg = data.assignments.find(
-            (a) => a.uniqueToken === urlToken
-          );
-          if (matchedAsg) {
-            setActiveClientToken(matchedAsg.uniqueToken);
-            setSelectedClientId(matchedAsg.clientId);
-            setRole('client');
-            setActiveTab('client');
-            setLoading(false);
-            return;
-          }
-        }
-
-        if (data.clients.length > 0) {
-          const firstClient = data.clients[0];
-          setSelectedClientId(firstClient.id);
-          const firstAsg =
-            data.assignments.find(
-              (a) => a.clientId === firstClient.id && a.status === 'pushed'
-            ) || data.assignments[0];
-          if (firstAsg) {
-            setActiveClientToken(firstAsg.uniqueToken);
-          }
-        }
-      } catch (err: unknown) {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof Error ? err.message : 'Failed to load workspace.'
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace));
+    } catch {
+      // Ignore storage quota issues
     }
-
-    fetchWorkspace();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [workspace]);
 
   const syncUrlClientToken = (token: string | null) => {
     try {
@@ -136,13 +140,12 @@ export default function App() {
       setActiveTab('clinician');
       syncUrlClientToken(null);
     } else {
-      // Switch to active client's latest pushed or current assignment
       const clientAsg =
-        workspace?.assignments.find(
+        workspace.assignments.find(
           (a) => a.clientId === selectedClientId && a.status === 'pushed'
         ) ||
-        workspace?.assignments.find((a) => a.clientId === selectedClientId) ||
-        workspace?.assignments[0];
+        workspace.assignments.find((a) => a.clientId === selectedClientId) ||
+        workspace.assignments[0];
       if (clientAsg) {
         setActiveClientToken(clientAsg.uniqueToken);
         syncUrlClientToken(clientAsg.uniqueToken);
@@ -154,9 +157,9 @@ export default function App() {
   const handleSelectClient = (clientId: string) => {
     setSelectedClientId(clientId);
     const matched =
-      workspace?.assignments.find(
+      workspace.assignments.find(
         (a) => a.clientId === clientId && a.status === 'pushed'
-      ) || workspace?.assignments.find((a) => a.clientId === clientId);
+      ) || workspace.assignments.find((a) => a.clientId === clientId);
     if (matched) {
       setActiveClientToken(matched.uniqueToken);
     }
@@ -169,7 +172,7 @@ export default function App() {
   };
 
   const handleOpenClientLink = (token: string) => {
-    const matched = workspace?.assignments.find((a) => a.uniqueToken === token);
+    const matched = workspace.assignments.find((a) => a.uniqueToken === token);
     if (matched) {
       setSelectedClientId(matched.clientId);
     }
@@ -189,26 +192,55 @@ export default function App() {
     status: 'walkthrough' | 'pushed';
     tasks: DraftTaskInput[];
   }): Promise<HomeworkAssignment> => {
-    const res = await fetch('/api/assignments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      throw new Error('Could not save worksheet.');
-    }
-    const created = (await res.json()) as HomeworkAssignment;
-    setWorkspace((prev) =>
-      prev
-        ? { ...prev, assignments: [created, ...prev.assignments] }
-        : prev
-    );
+    const client = workspace.clients.find((c) => c.id === payload.clientId);
+    const now = new Date().toISOString();
+    const id = `asg-${Math.random().toString(16).slice(2, 10)}`;
+    const uniqueToken = generateClientToken(client?.name || 'client');
+
+    const formattedTasks: HomeworkTask[] = payload.tasks.map((t, idx) => ({
+      id: `task-${id}-${idx + 1}`,
+      title: t.title,
+      instruction: t.instruction,
+      frequency: t.frequency || '3x this week',
+      promptQuestion:
+        t.promptQuestion || 'What did you notice while practicing this?',
+      completed: false,
+      reflectionResponse: '',
+    }));
+
+    const created: HomeworkAssignment = {
+      id,
+      clientId: payload.clientId,
+      title: payload.title,
+      modality: payload.modality,
+      clinicalRationale: payload.clinicalRationale,
+      walkthroughNotes: payload.walkthroughNotes,
+      estimatedMinutes: payload.estimatedMinutes,
+      status: payload.status,
+      uniqueToken,
+      createdAt: now,
+      pushedAt: payload.status === 'pushed' ? now : undefined,
+      tasks: formattedTasks,
+    };
+
+    setWorkspace((prev) => ({
+      ...prev,
+      assignments: [created, ...prev.assignments],
+    }));
     setActiveClientToken(created.uniqueToken);
     showToast(
       payload.status === 'pushed'
         ? 'Worksheet pushed to client link'
         : 'Worksheet saved for walkthrough'
     );
+
+    // Best-effort sync to backend if running full-stack Express server
+    fetch('/api/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+
     return created;
   };
 
@@ -216,29 +248,39 @@ export default function App() {
     assignmentId: string,
     updates: Partial<HomeworkAssignment>
   ): Promise<HomeworkAssignment> => {
-    const res = await fetch(`/api/assignments/${assignmentId}`, {
+    const now = new Date().toISOString();
+    let updatedResult: HomeworkAssignment | undefined;
+
+    setWorkspace((prev) => ({
+      ...prev,
+      assignments: prev.assignments.map((a) => {
+        if (a.id !== assignmentId) return a;
+        const nextStatus = updates.status ?? a.status;
+        const nextPushedAt =
+          nextStatus === 'pushed' && !a.pushedAt ? now : a.pushedAt;
+        updatedResult = {
+          ...a,
+          ...updates,
+          pushedAt: nextPushedAt,
+        };
+        return updatedResult;
+      }),
+    }));
+
+    if (updates.status === 'pushed' && updatedResult) {
+      showToast(`Pushed to client (?clientLink=${updatedResult.uniqueToken})`);
+    }
+
+    fetch(`/api/assignments/${assignmentId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
-    });
-    if (!res.ok) {
-      throw new Error('Could not update worksheet.');
-    }
-    const updated = (await res.json()) as HomeworkAssignment;
-    setWorkspace((prev) =>
-      prev
-        ? {
-            ...prev,
-            assignments: prev.assignments.map((a) =>
-              a.id === updated.id ? updated : a
-            ),
-          }
-        : prev
+    }).catch(() => {});
+
+    return (
+      updatedResult ||
+      workspace.assignments.find((a) => a.id === assignmentId)!
     );
-    if (updates.status === 'pushed') {
-      showToast(`Pushed to client (?clientLink=${updated.uniqueToken})`);
-    }
-    return updated;
   };
 
   const handleToggleTask = async (
@@ -247,29 +289,47 @@ export default function App() {
     completed?: boolean,
     reflectionResponse?: string
   ): Promise<HomeworkAssignment> => {
-    const res = await fetch(
-      `/api/assignments/${assignmentId}/tasks/${taskId}/toggle`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completed, reflectionResponse }),
-      }
+    const now = new Date().toISOString();
+    let updatedResult: HomeworkAssignment | undefined;
+
+    setWorkspace((prev) => ({
+      ...prev,
+      assignments: prev.assignments.map((a) => {
+        if (a.id !== assignmentId) return a;
+        const nextTasks = a.tasks.map((t) => {
+          if (t.id !== taskId) return t;
+          const nextCompleted =
+            typeof completed === 'boolean' ? completed : t.completed;
+          return {
+            ...t,
+            completed: nextCompleted,
+            completedAt:
+              typeof completed === 'boolean'
+                ? completed
+                  ? now
+                  : undefined
+                : t.completedAt,
+            reflectionResponse:
+              typeof reflectionResponse === 'string'
+                ? reflectionResponse
+                : t.reflectionResponse,
+          };
+        });
+        updatedResult = { ...a, tasks: nextTasks };
+        return updatedResult;
+      }),
+    }));
+
+    fetch(`/api/assignments/${assignmentId}/tasks/${taskId}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed, reflectionResponse }),
+    }).catch(() => {});
+
+    return (
+      updatedResult ||
+      workspace.assignments.find((a) => a.id === assignmentId)!
     );
-    if (!res.ok) {
-      throw new Error('Could not save task update.');
-    }
-    const updated = (await res.json()) as HomeworkAssignment;
-    setWorkspace((prev) =>
-      prev
-        ? {
-            ...prev,
-            assignments: prev.assignments.map((a) =>
-              a.id === updated.id ? updated : a
-            ),
-          }
-        : prev
-    );
-    return updated;
   };
 
   const handleSubmitAssignment = async (
@@ -280,65 +340,96 @@ export default function App() {
       overallReflection: string;
     }
   ) => {
-    const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-SG', {
+      day: '2-digit',
+      month: 'short',
+    });
+
+    setWorkspace((prev) => {
+      const targetAsg = prev.assignments.find((a) => a.id === assignmentId);
+      if (!targetAsg) return prev;
+
+      const completedCount = targetAsg.tasks.filter((t) => t.completed).length;
+      const total = Math.max(targetAsg.tasks.length, 1);
+      const completionRate = Math.round((completedCount / total) * 100);
+
+      const nextAssignments = prev.assignments.map((a) =>
+        a.id === assignmentId
+          ? {
+              ...a,
+              status: 'completed' as const,
+              submittedAt: now.toISOString(),
+              moodRating: payload.moodRating,
+              difficultyRating: payload.difficultyRating,
+              overallReflection: payload.overallReflection,
+            }
+          : a
+      );
+
+      const nextClients = prev.clients.map((c) => {
+        if (c.id !== targetAsg.clientId) return c;
+        const alreadySubmittedThisAsg = targetAsg.status === 'completed';
+        if (alreadySubmittedThisAsg) {
+          return c;
+        }
+        return {
+          ...c,
+          weeklyProgress: [
+            ...c.weeklyProgress,
+            {
+              weekLabel: `Wk ${c.weeklyProgress.length + 1}`,
+              completionRate,
+              moodScore: payload.moodRating,
+              submittedDate: formattedDate,
+            },
+          ],
+        };
+      });
+
+      return {
+        ...prev,
+        assignments: nextAssignments,
+        clients: nextClients,
+      };
+    });
+
+    showToast('Homework submitted to your clinician');
+
+    fetch(`/api/assignments/${assignmentId}/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      throw new Error('Could not submit homework.');
-    }
-    const { assignment: updatedAsg, client: updatedClient } =
-      (await res.json()) as {
-        assignment: HomeworkAssignment;
-        client?: WorkspacePayload['clients'][number];
-      };
-
-    setWorkspace((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        assignments: prev.assignments.map((a) =>
-          a.id === updatedAsg.id ? updatedAsg : a
-        ),
-        clients: updatedClient
-          ? prev.clients.map((c) =>
-              c.id === updatedClient.id ? updatedClient : c
-            )
-          : prev.clients,
-      };
-    });
-    showToast('Homework submitted to your clinician');
+    }).catch(() => {});
   };
 
   const handleSaveClinicianReview = async (
     assignmentId: string,
     clinicianFeedback: string
   ): Promise<HomeworkAssignment> => {
-    const res = await fetch(
-      `/api/assignments/${assignmentId}/clinician-review`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clinicianFeedback }),
-      }
-    );
-    if (!res.ok) {
-      throw new Error('Could not save review note.');
-    }
-    const updated = (await res.json()) as HomeworkAssignment;
-    setWorkspace((prev) =>
-      prev
-        ? {
-            ...prev,
-            assignments: prev.assignments.map((a) =>
-              a.id === updated.id ? updated : a
-            ),
-          }
-        : prev
-    );
+    let updatedResult: HomeworkAssignment | undefined;
+
+    setWorkspace((prev) => ({
+      ...prev,
+      assignments: prev.assignments.map((a) => {
+        if (a.id !== assignmentId) return a;
+        updatedResult = { ...a, clinicianFeedback };
+        return updatedResult;
+      }),
+    }));
+
     showToast('Clinician note shared with client');
-    return updated;
+
+    fetch(`/api/assignments/${assignmentId}/clinician-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clinicianFeedback }),
+    }).catch(() => {});
+
+    return (
+      updatedResult ||
+      workspace.assignments.find((a) => a.id === assignmentId)!
+    );
   };
 
   const handleUseTemplate = (resource: ResourceItem) => {
@@ -350,12 +441,25 @@ export default function App() {
     showToast(`Loaded "${resource.title}" into Generator`);
   };
 
-  const selectedClient = workspace?.clients.find(
-    (c) => c.id === selectedClientId
-  );
+  const handleResetDemoData = () => {
+    const fresh = createInitialWorkspace();
+    setWorkspace(fresh);
+    setSelectedClientId(fresh.clients[0]?.id || '');
+    setActiveClientToken(fresh.assignments[0]?.uniqueToken || '');
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+    } catch {
+      // Ignore storage errors
+    }
+    showToast('Demo clinical data restored');
+  };
+
+  const selectedClient =
+    workspace.clients.find((c) => c.id === selectedClientId) ||
+    workspace.clients[0];
   const activeAssignment =
-    workspace?.assignments.find((a) => a.uniqueToken === activeClientToken) ||
-    workspace?.assignments.find((a) => a.clientId === selectedClientId);
+    workspace.assignments.find((a) => a.uniqueToken === activeClientToken) ||
+    workspace.assignments.find((a) => a.clientId === selectedClient?.id);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF9F6] text-[#151B2E]">
@@ -370,98 +474,74 @@ export default function App() {
         }}
       />
 
-      {workspace && (
-        <RoleToggleStrip
-          role={role}
-          onToggleRole={handleToggleRole}
-          selectedClient={selectedClient}
-          activeAssignment={activeAssignment}
-          onCopyLink={handleCopyLink}
-        />
-      )}
+      <RoleToggleStrip
+        role={role}
+        onToggleRole={handleToggleRole}
+        selectedClient={selectedClient}
+        activeAssignment={activeAssignment}
+        onCopyLink={handleCopyLink}
+      />
 
       <main className="flex-1">
-        {loading ? (
-          <div className="max-w-[1360px] mx-auto px-6 py-24 flex flex-col items-center justify-center gap-3 text-sm text-[#57534E]">
-            <Loader2 className="w-6 h-6 animate-spin text-[#2045C8]" aria-hidden="true" />
-            <span>Loading clinical workspace...</span>
-          </div>
-        ) : loadError || !workspace ? (
-          <div className="max-w-lg mx-auto px-6 py-24 text-center">
-            <p className="text-sm font-medium text-[#991B1B]">
-              {loadError || 'Workspace unavailable.'}
-            </p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 text-xs font-medium bg-[#151B2E] text-white rounded-lg"
-            >
-              Retry
-            </button>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'overview' && (
-              <OverviewPage
-                clinician={workspace.clinician}
-                clients={workspace.clients}
-                assignments={workspace.assignments}
-                onNavigate={handleNavigate}
-                onStartNewWorksheet={() => {
-                  setRole('clinician');
-                  setClinicianSubTab('generator');
-                  setActiveTab('clinician');
-                }}
-                onOpenSampleClientLink={handleOpenClientLink}
-              />
-            )}
+        {activeTab === 'overview' && (
+          <OverviewPage
+            clinician={workspace.clinician}
+            clients={workspace.clients}
+            assignments={workspace.assignments}
+            onNavigate={handleNavigate}
+            onStartNewWorksheet={() => {
+              setRole('clinician');
+              setClinicianSubTab('generator');
+              setActiveTab('clinician');
+            }}
+            onOpenSampleClientLink={handleOpenClientLink}
+          />
+        )}
 
-            {activeTab === 'clinician' && (
-              <ClinicianWorkspace
-                clients={workspace.clients}
-                assignments={workspace.assignments}
-                selectedClientId={selectedClientId}
-                onSelectClient={handleSelectClient}
-                activeSubTab={clinicianSubTab}
-                onChangeSubTab={setClinicianSubTab}
-                incomingTemplate={incomingTemplate}
-                onClearIncomingTemplate={() => setIncomingTemplate(null)}
-                onCreateAssignment={handleCreateAssignment}
-                onUpdateAssignment={handleUpdateAssignment}
-                onSaveClinicianReview={handleSaveClinicianReview}
-                onOpenClientLink={handleOpenClientLink}
-                onCopyLink={handleCopyLink}
-              />
-            )}
+        {activeTab === 'clinician' && (
+          <ClinicianWorkspace
+            clients={workspace.clients}
+            assignments={workspace.assignments}
+            selectedClientId={selectedClient?.id || ''}
+            onSelectClient={handleSelectClient}
+            activeSubTab={clinicianSubTab}
+            onChangeSubTab={setClinicianSubTab}
+            incomingTemplate={incomingTemplate}
+            onClearIncomingTemplate={() => setIncomingTemplate(null)}
+            onCreateAssignment={handleCreateAssignment}
+            onUpdateAssignment={handleUpdateAssignment}
+            onSaveClinicianReview={handleSaveClinicianReview}
+            onOpenClientLink={handleOpenClientLink}
+            onCopyLink={handleCopyLink}
+          />
+        )}
 
-            {activeTab === 'client' && (
-              <ClientPortal
-                clinician={workspace.clinician}
-                clients={workspace.clients}
-                assignments={workspace.assignments}
-                activeToken={activeClientToken}
-                onSelectToken={(token) => {
-                  setActiveClientToken(token);
-                  const matched = workspace.assignments.find(
-                    (a) => a.uniqueToken === token
-                  );
-                  if (matched) {
-                    setSelectedClientId(matched.clientId);
-                  }
-                  syncUrlClientToken(token);
-                }}
-                onToggleTask={handleToggleTask}
-                onSubmitAssignment={handleSubmitAssignment}
-              />
-            )}
+        {activeTab === 'client' && (
+          <ClientPortal
+            clinician={workspace.clinician}
+            clients={workspace.clients}
+            assignments={workspace.assignments}
+            activeToken={activeClientToken}
+            onSelectToken={(token) => {
+              setActiveClientToken(token);
+              const matched = workspace.assignments.find(
+                (a) => a.uniqueToken === token
+              );
+              if (matched) {
+                setSelectedClientId(matched.clientId);
+              }
+              syncUrlClientToken(token);
+            }}
+            onToggleTask={handleToggleTask}
+            onSubmitAssignment={handleSubmitAssignment}
+          />
+        )}
 
-            {activeTab === 'resources' && (
-              <ResourcesLibrary
-                resources={workspace.resources}
-                onUseTemplate={handleUseTemplate}
-              />
-            )}
-          </>
+        {activeTab === 'resources' && (
+          <ResourcesLibrary
+            resources={workspace.resources}
+            onUseTemplate={handleUseTemplate}
+          />
         )}
       </main>
 
@@ -475,7 +555,7 @@ export default function App() {
             <span aria-hidden="true">·</span>
             <span>Between-session therapy continuity · Singapore PDPA aligned</span>
           </div>
-          <div className="flex items-center gap-5">
+          <div className="flex flex-wrap items-center gap-5">
             <button
               type="button"
               onClick={() => handleNavigate('overview')}
@@ -503,6 +583,14 @@ export default function App() {
               className="hover:text-[#151B2E]"
             >
               Resources
+            </button>
+            <button
+              type="button"
+              onClick={handleResetDemoData}
+              className="inline-flex items-center gap-1 text-[#78716C] hover:text-[#151B2E]"
+            >
+              <RotateCcw className="w-3 h-3" aria-hidden="true" />
+              <span>Reset Demo Data</span>
             </button>
           </div>
         </div>
